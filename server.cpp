@@ -49,6 +49,16 @@ void HandleClient(MySocket client_socket) {
     }
 }
 
+void HandleClientSafely(MySocket client_socket) noexcept {
+    try {
+        HandleClient(std::move(client_socket));
+    } catch (const std::exception& e) {
+        std::cerr << "Client handler failed: " << e.what() << '\n';
+    } catch (...) {
+        std::cerr << "Client handler failed with an unknown exception\n";
+    }
+}
+
 int RunServer() {
     in_addr server_in_addr;
     if (!handle_inet_pton(SERVER_ADDRESS, server_in_addr)) {
@@ -82,7 +92,7 @@ int RunServer() {
 
         try {
             MySocket client_socket(accepted_socket_fd);
-            std::thread client_thread(HandleClient, std::move(client_socket));
+            std::thread client_thread(HandleClientSafely, std::move(client_socket));
             client_thread.detach();
         } catch (const std::exception& e) {
             std::cerr << "Failed to start client thread: " << e.what() << '\n';
