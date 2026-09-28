@@ -6,9 +6,29 @@
 #include <cstring>
 #include <string>
 #include <cstdlib>
+#include <memory>
+#include <semaphore>
 #include <thread>
 #include "utils.hpp"
 #include "constants.hpp"
+
+using ClientSlots = std::counting_semaphore<MAX_CONCURRENT_CLIENTS>;
+
+class ClientSlotGuard {
+public:
+    explicit ClientSlotGuard(std::shared_ptr<ClientSlots> client_slots)
+        : client_slots_(std::move(client_slots)) {}
+
+    ClientSlotGuard(const ClientSlotGuard&) = delete;
+    ClientSlotGuard& operator=(const ClientSlotGuard&) = delete;
+
+    ~ClientSlotGuard() {
+        client_slots_->release();
+    }
+
+private:
+    std::shared_ptr<ClientSlots> client_slots_;
+};
 
 void HandleClient(MySocket client_socket) {
     std::cout << "Connection accepted" << std::endl;
@@ -49,7 +69,11 @@ void HandleClient(MySocket client_socket) {
     }
 }
 
-void HandleClientSafely(MySocket client_socket) noexcept {
+void HandleClientSafely(
+    MySocket client_socket,
+    std::shared_ptr<ClientSlots> client_slots
+) noexcept {
+    ClientSlotGuard client_slot_guard(std::move(client_slots));
     try {
         HandleClient(std::move(client_socket));
     } catch (const std::exception& e) {
@@ -72,13 +96,17 @@ int RunServer() {
         return EXIT_FAILURE;
     }
 
-    int listen_return_code = listen(server_socket.GetSocket(), 1);
+    int listen_return_code = listen(
+        server_socket.GetSocket(),
+        MAX_CONCURRENT_CLIENTS
+    );
     if (listen_return_code != 0) {
         std::cerr << "listen error: " << std::strerror(errno) << '\n';
         return EXIT_FAILURE;
     }
 
     std::cout << "Server listening on port: " << SERVER_PORT << std::endl;
+    auto client_slots = std::make_shared<ClientSlots>(MAX_CONCURRENT_CLIENTS);
     while (true) {
         std::cout << "Waiting for connection..." << std::endl;
         int accepted_socket_fd = accept(server_socket.GetSocket(), nullptr, nullptr);
@@ -90,11 +118,26 @@ int RunServer() {
             continue;
         }
 
+        bool client_slot_acquired = false;
         try {
             MySocket client_socket(accepted_socket_fd);
-            std::thread client_thread(HandleClientSafely, std::move(client_socket));
+            if (!client_slots->try_acquire()) {
+                std::cerr << "Too many clients, connection rejected\n";
+                continue;
+            }
+            client_slot_acquired = true;
+
+            std::thread client_thread(
+                HandleClientSafely,
+                std::move(client_socket),
+                client_slots
+            );
+            client_slot_acquired = false;
             client_thread.detach();
         } catch (const std::exception& e) {
+            if (client_slot_acquired) {
+                client_slots->release();
+            }
             std::cerr << "Failed to start client thread: " << e.what() << '\n';
         }
     }
