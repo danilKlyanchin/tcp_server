@@ -81,6 +81,17 @@ public:
     MySocket(const MySocket&) = delete;
     MySocket& operator=(const MySocket&) = delete;
 
+    MySocket(MySocket&& other) noexcept
+        : socket_fd(std::exchange(other.socket_fd, -1)) {}
+
+    MySocket& operator=(MySocket&& other) noexcept {
+        if (this != &other) {
+            CloseSocket();
+            socket_fd = std::exchange(other.socket_fd, -1);
+        }
+        return *this;
+    }
+
     ~MySocket() {
         CloseSocket();
     }
