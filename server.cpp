@@ -9,16 +9,7 @@
 #include "utils.hpp"
 #include "constants.hpp"
 
-void HandleClient(MySocket& server_socket) {
-    std::cout << "Waiting for connection..." << std::endl;
-    auto accepted_socket_fd = accept(server_socket.GetSocket(), nullptr, nullptr);
-    if (accepted_socket_fd == -1 && errno == EINTR) {
-        return;
-    } else if (accepted_socket_fd == -1) {
-        std::cerr << "accept error: " << std::strerror(errno) << '\n';
-        return;
-    }
-    auto client_socket = MySocket(accepted_socket_fd);
+void HandleClient(MySocket client_socket) {
     std::cout << "Connection accepted" << std::endl;
 
     while (true) {
@@ -78,11 +69,21 @@ int RunServer() {
 
     std::cout << "Server listening on port: " << SERVER_PORT << std::endl;
     while (true) {
-        try {
-            HandleClient(server_socket);
-        } catch (const std::exception& e) {
-            std::cerr << "Failed to accept connection with error " << e.what() << '\n';
+        std::cout << "Waiting for connection..." << std::endl;
+        int accepted_socket_fd = accept(server_socket.GetSocket(), nullptr, nullptr);
+        if (accepted_socket_fd == -1 && errno == EINTR) {
             continue;
+        }
+        if (accepted_socket_fd == -1) {
+            std::cerr << "accept error: " << std::strerror(errno) << '\n';
+            continue;
+        }
+
+        try {
+            MySocket client_socket(accepted_socket_fd);
+            HandleClient(std::move(client_socket));
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to handle client: " << e.what() << '\n';
         }
     }
 
