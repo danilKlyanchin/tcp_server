@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <cstdlib>
+#include <thread>
 #include "utils.hpp"
 #include "constants.hpp"
 
@@ -81,9 +82,10 @@ int RunServer() {
 
         try {
             MySocket client_socket(accepted_socket_fd);
-            HandleClient(std::move(client_socket));
+            std::thread client_thread(HandleClient, std::move(client_socket));
+            client_thread.detach();
         } catch (const std::exception& e) {
-            std::cerr << "Failed to handle client: " << e.what() << '\n';
+            std::cerr << "Failed to start client thread: " << e.what() << '\n';
         }
     }
 
