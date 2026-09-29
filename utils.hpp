@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <iostream>
 #include <arpa/inet.h>
@@ -72,11 +73,12 @@ class MySocket {
 public:
     MySocket() : socket_fd(socket(AF_INET, SOCK_STREAM, 0)) {
         CheckSocket();
-        SetSockOpt();
+        SetNoSigPipe();
     }
     MySocket(int created_socket_fd) : socket_fd(created_socket_fd) {
         CheckSocket();
-        SetSockOpt();
+        SetNoSigPipe();
+        SetIoTimeouts();
     }
     MySocket(const MySocket&) = delete;
     MySocket& operator=(const MySocket&) = delete;
@@ -126,6 +128,11 @@ public:
                 return {.code = Code::Error, .error_message = "Peer disconnected in the middle of message header"};
             } else if (errno == EINTR) {
                 std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue receiving msg_size..." << std::endl;
+            } else if (IsTimeoutError()) {
+                if (num_received_bytes == 0) {
+                    return {.code = Code::Error, .error_message = "Receive timed out while waiting for message header"};
+                }
+                return {.code = Code::Error, .error_message = "Receive timed out in the middle of message header"};
             } else {
                 return {.code = Code::Error, .error_message = std::strerror(errno)};
             }
@@ -158,6 +165,8 @@ public:
                 return {.code = Code::Error, .error_message = "Peer disconnected in the middle of message"};
             } else if (errno == EINTR) {
                 std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue receiving message..." << std::endl;
+            } else if (IsTimeoutError()) {
+                return {.code = Code::Error, .error_message = "Receive timed out in the middle of message"};
             } else {
                 return {.code = Code::Error, .error_message = std::strerror(errno)};
             }
@@ -176,6 +185,8 @@ public:
                 return {.code = Code::Error, .error_message = "Send 0 bytes => no progress error"};
             } else if (errno == EINTR) {
                 std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue sending message..." << std::endl;
+            } else if (IsTimeoutError()) {
+                return {.code = Code::Error, .error_message = "Send timed out"};
             } else {
                 return {.code = Code::Error, .error_message = std::strerror(errno)};
             }
@@ -212,26 +223,63 @@ private:
         }
     }
 
-    void SetSockOpt() {
-        int enabled = 1;
+    bool IsTimeoutError() const {
+        return errno == EAGAIN || errno == EWOULDBLOCK;
+    }
+
+    void SetSocketOption(
+        int option,
+        const void* value,
+        socklen_t value_size,
+        const char* option_name
+    ) {
         int result = setsockopt(
             socket_fd,
             SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &enabled,
-            sizeof(enabled)
+            option,
+            value,
+            value_size
         );
         if (result == 0) {
-            std::cout << "SO_NOSIGPIPE set" << std::endl;
-        } else {
-            int saved_errno = errno;
-            CloseSocket();
-            throw std::system_error(
-                saved_errno,
-                std::generic_category(),
-                "setsockopt(SO_NOSIGPIPE)"
-            );
+            return;
         }
+
+        int saved_errno = errno;
+        CloseSocket();
+        throw std::system_error(
+            saved_errno,
+            std::generic_category(),
+            std::string("setsockopt(") + option_name + ")"
+        );
+    }
+
+    void SetNoSigPipe() {
+        int enabled = 1;
+        SetSocketOption(
+            SO_NOSIGPIPE,
+            &enabled,
+            sizeof(enabled),
+            "SO_NOSIGPIPE"
+        );
+    }
+
+    void SetIoTimeouts() {
+        timeval timeout = {
+            .tv_sec = CLIENT_IO_TIMEOUT_SECONDS,
+            .tv_usec = 0,
+        };
+        SetSocketOption(
+            SO_RCVTIMEO,
+            &timeout,
+            sizeof(timeout),
+            "SO_RCVTIMEO"
+        );
+        SetSocketOption(
+            SO_SNDTIMEO,
+            &timeout,
+            sizeof(timeout),
+            "SO_SNDTIMEO"
+        );
     }
 
     int socket_fd;
