@@ -16,15 +16,16 @@
 #include <optional>
 #include <system_error>
 #include "constants.hpp"
+#include "logging.hpp"
 
 
 bool handle_inet_pton(const char* server_address, in_addr& in_addr) {
     int inet_pton_return_code = inet_pton(AF_INET, server_address, &in_addr.s_addr);
     if (inet_pton_return_code == -1) {
-        std::cerr << "inet_pton failed return_code: " << inet_pton_return_code << std::endl;
+        LogError("[network] inet_pton failed, return_code=", inet_pton_return_code);
         return false;
     } else if (inet_pton_return_code == 0) {
-        std::cerr << "inet_pton wrong address and family" << std::endl;
+        LogError("[network] inet_pton rejected address or family");
         return false;
     }
     return true;
@@ -113,13 +114,11 @@ public:
     }
 
     MessageSizeResult ReceiveMessageSize() {
-        std::cout << "Receiving message size..." << std::endl;
         size_t num_received_bytes = 0;
         uint32_t message_size;
         while (num_received_bytes < sizeof(message_size)) {
             ssize_t recv_return_code = recv(socket_fd, reinterpret_cast<char*>(&message_size) + num_received_bytes, sizeof(message_size) - num_received_bytes, 0);
             if (recv_return_code > 0) {
-                std::cout << "Received " << recv_return_code << " bytes" << std::endl;
                 num_received_bytes += static_cast<size_t>(recv_return_code);
             } else if (recv_return_code == 0) {
                 if (num_received_bytes == 0) {
@@ -127,7 +126,7 @@ public:
                 }
                 return {.code = Code::Error, .error_message = "Peer disconnected in the middle of message header"};
             } else if (errno == EINTR) {
-                std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue receiving msg_size..." << std::endl;
+                continue;
             } else if (IsTimeoutError()) {
                 if (num_received_bytes == 0) {
                     return {.code = Code::Error, .error_message = "Receive timed out while waiting for message header"};
@@ -150,13 +149,11 @@ public:
     }
 
     MessageResult ReceiveMessage(size_t message_size) {
-        std::cout << "Receiving message..." << std::endl;
         std::string buffer(message_size, 0);
         size_t num_received_bytes = 0;
         while (num_received_bytes < message_size) {
             ssize_t recv_return_code = recv(socket_fd, buffer.data() + num_received_bytes, buffer.size() - num_received_bytes, 0);
             if (recv_return_code > 0) {
-                std::cout << "Received " << recv_return_code << " bytes" << std::endl;
                 num_received_bytes += static_cast<size_t>(recv_return_code);
             } else if (recv_return_code == 0) {
                 if (num_received_bytes == 0) {
@@ -164,7 +161,7 @@ public:
                 }
                 return {.code = Code::Error, .error_message = "Peer disconnected in the middle of message"};
             } else if (errno == EINTR) {
-                std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue receiving message..." << std::endl;
+                continue;
             } else if (IsTimeoutError()) {
                 return {.code = Code::Error, .error_message = "Receive timed out in the middle of message"};
             } else {
@@ -179,12 +176,11 @@ public:
         while (num_sent_bytes < message.size()) {
             ssize_t send_return_code = send(socket_fd, message.data() + num_sent_bytes, message.size() - num_sent_bytes, 0);
             if (send_return_code > 0) {
-                std::cout << "Sent " << send_return_code << " bytes" << std::endl;
                 num_sent_bytes += static_cast<size_t>(send_return_code);
             } else if (send_return_code == 0) {
                 return {.code = Code::Error, .error_message = "Send 0 bytes => no progress error"};
             } else if (errno == EINTR) {
-                std::cout << "errno is EINTR with msg: " << std::strerror(errno) << ", continue sending message..." << std::endl;
+                continue;
             } else if (IsTimeoutError()) {
                 return {.code = Code::Error, .error_message = "Send timed out"};
             } else {
@@ -199,7 +195,7 @@ private:
         if (IsValidSocket()) {
             int close_return_code = close(socket_fd);
             if (close_return_code != 0) {
-                std::cerr << "Socket close error: " << std::strerror(errno) << std::endl;
+                LogError("[socket] close failed: ", std::strerror(errno));
             }
             socket_fd = -1;
         }
